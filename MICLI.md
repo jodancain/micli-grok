@@ -102,23 +102,9 @@ crate::micli_auto::format_capabilities_listing()
 Or read this section + `micli_auto.rs`. A `grok` slash/CLI surface for
 `auto capabilities` can be wired later; the listing API already exists.
 
-### 429 / quota failover (follow-up)
+### 429 / quota failover
 
-`next_fallback()` + `is_quota_or_rate_limit_error()` are implemented and tested.
-Hooking them into `handle_sampling_failure` for mid-turn chain advance was
-deferred (SessionActor / recovery-enum surface area). **Initial capability pick
-per turn is live.**
+When the selected catalog model is Auto and sampling fails with RateLimited / HTTP 429 / quota-like messages, micli advances `next_fallback` within the capability pool (then adjacent pool), refreshes sampler + `ConversationRequest.model`, and resubmits the turn (`CompactAndResubmit`). Logs: `[micli-auto] failover from → to`.
 
-## Source map
+Wire-model sync: after remap, `run_turn_via_sampler` copies the remapped `ezr/...` id onto `ConversationRequest.model` so the HTTP body does not keep `model=auto`.
 
-| Piece | Location |
-|---|---|
-| Capability classifier + pools | `crates/codegen/xai-grok-shell/src/micli_auto.rs` |
-| Catalog stubs `auto` / `micli-auto` | `inject_micli_auto_catalog` in `agent/config.rs` |
-| Per-turn remap | `prepare_sampler_for_turn` → `apply_micli_auto_remap` |
-| Example config | `config/micli-9route.example.toml` |
-
-## Upstream Grok docs
-
-See the root [README.md](README.md) for DotSlash/protoc requirements and general
-Grok Build development notes.

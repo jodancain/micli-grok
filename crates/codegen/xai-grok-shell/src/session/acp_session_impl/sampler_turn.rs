@@ -1011,8 +1011,62 @@ impl SessionActor {
 
     // (See `SamplerFailureRecovery` enum near the bottom of the impl block.)
 
+    /// On Auto + quota/429, advance the capability pool and refresh sampler config.
+    /// Returns true when a fallback model was applied (caller should resubmit).
+    async fn try_micli_auto_failover(
+        &self,
+        error: &xai_grok_sampler::SamplingErrorInfo,
+    ) -> bool {
+        use xai_grok_sampler::SamplingErrorKind;
+        let catalog = self.models_manager.current_model_id().0.to_string();
+        if !crate::micli_auto::is_auto_model_id(&catalog) {
+            return false;
+        }
+        let quota_like = matches!(error.kind, SamplingErrorKind::RateLimited)
+            || error.status_code == Some(429)
+            || crate::micli_auto::is_quota_or_rate_limit_error(&error.message);
+        if !quota_like {
+            return false;
+        }
+        let session_id = self.session_info.id.0.as_ref();
+        if crate::micli_auto::current_resolution(session_id).is_none() {
+            let prompt = self.last_human_prompt_for_auto().await;
+            let _ = crate::micli_auto::resolution_for_session(session_id, &prompt, None);
+        }
+        let from = crate::micli_auto::current_resolution(session_id)
+            .map(|r| r.model_api_id)
+            .unwrap_or_else(|| "unknown".into());
+        let Some(next) = crate::micli_auto::advance_failover(session_id) else {
+            eprintln!(
+                "[micli-auto] failover exhausted session={} from={}",
+                session_id, from
+            );
+            return false;
+        };
+        eprintln!(
+            "[micli-auto] failover {} → {} capability={} chain_index={}",
+            from,
+            next.model_api_id,
+            next.capability.as_str(),
+            next.chain_index
+        );
+        tracing::warn!(
+            from = %from,
+            to = %next.model_api_id,
+            capability = %next.capability.as_str(),
+            chain_index = next.chain_index,
+            status = ?error.status_code,
+            "[micli-auto] quota/429 failover"
+        );
+        let _ = self.prepare_sampler_for_turn().await;
+        true
+    }
+
     /// Refresh auth and push a fresh `SamplerConfig` before each turn.
-    pub(crate) async fn prepare_sampler_for_turn(&self) {
+    /// Returns the wire model id after micli Auto remap (same as `SamplerConfig.model`).
+    /// Callers must copy this onto `ConversationRequest.model`: `build_request` runs
+    /// before prepare, and `apply_defaults` only fills model when the request field is `None`.
+    pub(crate) async fn prepare_sampler_for_turn(&self) -> String {
         self.refresh_token_if_expired().await;
         let mut sampler_config = self.reconstruct_full_config().await;
         // micli Auto: remap synthetic `auto` / `micli-auto` → concrete `ezr/...` for this call only.
@@ -1025,7 +1079,28 @@ impl SessionActor {
         }
         // Carry over the session's per-chunk idle timeout via `SamplerConfig.idle_timeout_secs`
         sampler_config.idle_timeout_secs = Some(self.inference_idle_timeout.as_secs());
+        let wire_model = sampler_config.model.clone();
         self.sampler_handle.update_config(sampler_config);
+        // update_config is async on the sampler actor — flush so this turn's Submit
+        // does not race and still send model="auto".
+        let _ = self.sampler_handle.active_count().await;
+        wire_model
+    }
+
+    /// Copy remapped Auto model onto the already-built `ConversationRequest`.
+    fn sync_request_model_after_prepare(
+        &self,
+        request: &mut ConversationRequest,
+        wire_model: &str,
+    ) {
+        let before = request.model.clone();
+        if request.model.as_deref() != Some(wire_model) {
+            request.model = Some(wire_model.to_string());
+            eprintln!(
+                "[micli-auto] synced ConversationRequest.model {:?} → {}",
+                before, wire_model
+            );
+        }
     }
 
     /// If the selected model is Auto, classify the latest human prompt and rewrite
@@ -1042,7 +1117,11 @@ impl SessionActor {
             .or_else(|_| std::env::var("MICLI_AUTO_TIER"))
             .ok()
             .and_then(|s| crate::micli_auto::AutoCapability::parse(&s));
-        let resolved = crate::micli_auto::resolve_auto_model(&prompt, forced);
+        let resolved = crate::micli_auto::resolution_for_session(
+            self.session_info.id.0.as_ref(),
+            &prompt,
+            forced,
+        );
         eprintln!(
             "[micli-auto] capability={} model={}",
             resolved.capability.as_str(),
@@ -1055,6 +1134,10 @@ impl SessionActor {
             "[micli-auto] resolved"
         );
         sampler_config.model = resolved.model_api_id.clone();
+        // Critical: Auto's catalog stub may point at a placeholder base_url/creds.
+        // Remap must also adopt the *target* model's endpoint + BYOK, or the request
+        // keeps Auto's auth and fails (e.g. "No active credentials for provider: openai").
+        const EZR_BASE: &str = "https://router.yundongyl.cn/v1";
         if let Some(entry) = crate::agent::config::find_model_by_id(
             &self.models_manager.models(),
             &resolved.catalog_key,
@@ -1062,10 +1145,74 @@ impl SessionActor {
             if let Some(mct) = entry.info.max_completion_tokens {
                 sampler_config.max_completion_tokens = Some(mct);
             }
-            if !entry.info.model.is_empty() && !crate::micli_auto::is_auto_model_id(&entry.info.model)
+            if !entry.info.model.is_empty()
+                && !crate::micli_auto::is_auto_model_id(&entry.info.model)
             {
                 sampler_config.model = entry.info.model.clone();
             }
+            if !entry.info.base_url.is_empty()
+                && !crate::micli_auto::is_auto_model_id(&entry.info.base_url)
+            {
+                sampler_config.base_url = entry.info.base_url.clone();
+            }
+            if let Some(key) = entry.own_credential() {
+                sampler_config.api_key = Some(key);
+                sampler_config.bearer_resolver = None;
+            }
+        } else {
+            sampler_config.base_url = EZR_BASE.to_string();
+            if let Ok(key) = std::env::var("EZR_CLIENT_KEY").or_else(|_| std::env::var("XAI_API_KEY"))
+            {
+                if !key.is_empty() {
+                    sampler_config.api_key = Some(key);
+                    sampler_config.bearer_resolver = None;
+                }
+            }
+        }
+        if sampler_config.base_url.is_empty()
+            || crate::micli_auto::is_auto_model_id(&sampler_config.base_url)
+        {
+            sampler_config.base_url = EZR_BASE.to_string();
+        }
+        if sampler_config.api_key.as_ref().is_none_or(|k| k.is_empty()) {
+            if let Ok(key) = std::env::var("EZR_CLIENT_KEY").or_else(|_| std::env::var("XAI_API_KEY"))
+            {
+                if !key.is_empty() {
+                    sampler_config.api_key = Some(key);
+                    sampler_config.bearer_resolver = None;
+                }
+            }
+        }
+        sampler_config.api_backend = xai_grok_sampling_types::ApiBackend::ChatCompletions;
+        sampler_config.auth_scheme = xai_grok_sampler::AuthScheme::Bearer;
+        sampler_config.supports_backend_search = false;
+        sampler_config.extra_response_includes.clear();
+        if let Some(entry) = crate::agent::config::find_model_by_id(
+            &self.models_manager.models(),
+            &resolved.catalog_key,
+        ) {
+            match &entry.info.api_backend {
+                xai_grok_sampling_types::ApiBackend::ChatCompletions
+                | xai_grok_sampling_types::ApiBackend::Messages => {
+                    sampler_config.api_backend = entry.info.api_backend.clone();
+                }
+                _ => {}
+            }
+        }
+        eprintln!(
+            "[micli-auto] wire base_url={} has_key={} api_backend={:?} auth_scheme={:?}",
+            sampler_config.base_url,
+            sampler_config.api_key.as_ref().is_some_and(|k| !k.is_empty()),
+            sampler_config.api_backend,
+            sampler_config.auth_scheme,
+        );
+        if let Some(mut sc) = self.chat_state_handle.get_sampling_config().await {
+            sc.model = sampler_config.model.clone();
+            sc.base_url = sampler_config.base_url.clone();
+            sc.api_backend = sampler_config.api_backend.clone();
+            sc.max_completion_tokens = sampler_config.max_completion_tokens;
+            self.chat_state_handle.update_sampling_config(sc);
+            let _ = self.chat_state_handle.get_sampling_config().await;
         }
     }
 
@@ -1358,6 +1505,11 @@ impl SessionActor {
             return Err(acp::Error::invalid_params().data(friendly));
         }
 
+        // micli Auto: try next model in the capability pool before dying on 429/quota.
+        if self.try_micli_auto_failover(&error).await {
+            return Ok(SamplerFailureRecovery::CompactAndResubmit);
+        }
+
         if matches!(error.kind, SamplingErrorKind::RateLimited) {
             self.log_terminal_failure("rate_limited", error.status_code, &detailed_message);
             self.send_xai_notification(XaiSessionUpdate::RetryState(
@@ -1465,7 +1617,7 @@ impl SessionActor {
                     Some(self.session_info.id.0.as_ref()),
                     None,
                 );
-                self.prepare_sampler_for_turn().await;
+                let _ = self.prepare_sampler_for_turn().await;
                 return Ok(SamplerFailureRecovery::RefreshAuthAndResubmit {
                     credential: error.credential,
                     store: RecoveredStore::SessionToken,
@@ -1493,7 +1645,7 @@ impl SessionActor {
         if let Some(ref provider) = auth_provider
             && self.try_provider_401_recovery(provider).await
         {
-            self.prepare_sampler_for_turn().await;
+            let _ = self.prepare_sampler_for_turn().await;
             return Ok(SamplerFailureRecovery::RefreshAuthAndResubmit {
                 credential: error.credential,
                 store: RecoveredStore::AuthProvider,
@@ -1706,7 +1858,7 @@ impl SessionActor {
     /// the wire bearer comes from the live resolver at send time.
     pub(crate) async fn run_turn_via_sampler(
         self: &Arc<Self>,
-        request: ConversationRequest,
+        mut request: ConversationRequest,
         budget: &mut RateLimitWaitBudget,
         transient: TransientRetryState,
         mid_salvage_continuation: bool,
@@ -1715,7 +1867,18 @@ impl SessionActor {
         // Per-turn auth refresh + sampler config push. Mirrors
         // `prepare_chat_completion(false)` from the legacy path.
         if !park.is_parked() {
-            self.prepare_sampler_for_turn().await;
+            let wire_model = self.prepare_sampler_for_turn().await;
+            self.sync_request_model_after_prepare(&mut request, &wire_model);
+        } else if request
+            .model
+            .as_ref()
+            .is_some_and(|m| crate::micli_auto::is_auto_model_id(m))
+        {
+            if let Some(sc) = self.chat_state_handle.get_sampling_config().await {
+                if !crate::micli_auto::is_auto_model_id(&sc.model) {
+                    self.sync_request_model_after_prepare(&mut request, &sc.model);
+                }
+            }
         }
 
         if !budget.can_wait() {
@@ -1761,7 +1924,8 @@ impl SessionActor {
                     // A token can expire across minutes of accumulated waits
                     // (parked turns skip it — see `run_turn_via_sampler`).
                     if !park.is_parked() {
-                        self.prepare_sampler_for_turn().await;
+                        let wire_model = self.prepare_sampler_for_turn().await;
+                        self.sync_request_model_after_prepare(&mut request, &wire_model);
                     }
                     self.turn_phases.record_sampling_retries(1);
                 }

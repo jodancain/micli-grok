@@ -9,6 +9,9 @@
 //! Failover: [`next_fallback`] advances within the pool, then into an adjacent
 //! pool. Mid-turn 429 wiring in the sampler loop is a follow-up (see `MICLI.md`).
 
+use std::collections::HashMap;
+use std::sync::OnceLock;
+
 /// Capability pool for Auto model selection (Cursor-Auto style).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AutoCapability {
@@ -119,6 +122,60 @@ impl AutoResolution {
     pub fn tier(&self) -> AutoCapability {
         self.capability
     }
+}
+
+
+/// Per-session Auto pick for the current user prompt (survives mid-turn failover).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutoTurnState {
+    pub prompt: String,
+    pub resolution: AutoResolution,
+}
+
+fn auto_turn_map() -> &'static std::sync::Mutex<HashMap<String, AutoTurnState>> {
+    static MAP: OnceLock<std::sync::Mutex<HashMap<String, AutoTurnState>>> = OnceLock::new();
+    MAP.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+/// Resolve for this session+prompt, reusing a prior failover index when the prompt is unchanged.
+pub fn resolution_for_session(
+    session_id: &str,
+    prompt: &str,
+    forced_capability: Option<AutoCapability>,
+) -> AutoResolution {
+    let mut map = auto_turn_map().lock().expect("micli auto turn map");
+    if let Some(st) = map.get(session_id) {
+        if st.prompt == prompt {
+            return st.resolution.clone();
+        }
+    }
+    let resolution = resolve_auto_model(prompt, forced_capability);
+    map.insert(
+        session_id.to_string(),
+        AutoTurnState {
+            prompt: prompt.to_string(),
+            resolution: resolution.clone(),
+        },
+    );
+    resolution
+}
+
+/// Advance this session's Auto chain after a quota/429 failure. Returns the new resolution.
+pub fn advance_failover(session_id: &str) -> Option<AutoResolution> {
+    let mut map = auto_turn_map().lock().expect("micli auto turn map");
+    let st = map.get_mut(session_id)?;
+    let next = next_fallback(&st.resolution)?;
+    st.resolution = next.clone();
+    Some(next)
+}
+
+/// Current Auto resolution for a session, if any.
+pub fn current_resolution(session_id: &str) -> Option<AutoResolution> {
+    auto_turn_map()
+        .lock()
+        .expect("micli auto turn map")
+        .get(session_id)
+        .map(|s| s.resolution.clone())
 }
 
 /// Whether `id` is the synthetic Auto catalog key / placeholder API id.
