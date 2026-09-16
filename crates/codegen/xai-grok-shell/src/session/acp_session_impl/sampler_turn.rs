@@ -1011,6 +1011,33 @@ impl SessionActor {
 
     // (See `SamplerFailureRecovery` enum near the bottom of the impl block.)
 
+    fn is_temperature_deprecated_error(error: &xai_grok_sampler::SamplingErrorInfo) -> bool {
+        let msg = error.message.to_ascii_lowercase();
+        (error.status_code == Some(400) || msg.contains("400"))
+            && msg.contains("temperature")
+            && (msg.contains("deprecated") || msg.contains("invalid_request"))
+    }
+
+    async fn try_clear_temperature_and_retry(&self) -> bool {
+        let mut changed = false;
+        if let Some(mut sc) = self.chat_state_handle.get_sampling_config().await {
+            if sc.temperature.is_some() {
+                eprintln!(
+                    "[micli-auto] 400 temperature-deprecated → clearing sampling temperature={:?}",
+                    sc.temperature
+                );
+                sc.temperature = None;
+                self.chat_state_handle.update_sampling_config(sc);
+                let _ = self.chat_state_handle.get_sampling_config().await;
+                changed = true;
+            }
+        }
+        // Also force a prepare so SamplerConfig / next request omit temperature.
+        let _ = self.prepare_sampler_for_turn().await;
+        // Only resubmit when we actually cleared a value — avoids CompactAndResubmit loops.
+        changed
+    }
+
     /// On Auto + quota/429, advance the capability pool and refresh sampler config.
     /// Returns true when a fallback model was applied (caller should resubmit).
     async fn try_micli_auto_failover(
@@ -1079,6 +1106,7 @@ impl SessionActor {
         }
         // Carry over the session's per-chunk idle timeout via `SamplerConfig.idle_timeout_secs`
         sampler_config.idle_timeout_secs = Some(self.inference_idle_timeout.as_secs());
+        Self::sanitize_ezr_sampler_config(&mut sampler_config);
         let wire_model = sampler_config.model.clone();
         self.sampler_handle.update_config(sampler_config);
         // update_config is async on the sampler actor — flush so this turn's Submit
@@ -1100,6 +1128,42 @@ impl SessionActor {
                 "[micli-auto] synced ConversationRequest.model {:?} → {}",
                 before, wire_model
             );
+        }
+        Self::sanitize_ezr_request(request, wire_model);
+    }
+
+    /// 9route Claude Sonnet 5 rejects `temperature` (incl. 0) with HTTP 400
+    /// "`temperature` is deprecated for this model". Drop it on the wire.
+    fn sanitize_ezr_sampler_config(sampler_config: &mut SamplingConfig) {
+        let ezr = sampler_config.model.starts_with("ezr/")
+            || sampler_config.base_url.contains("yundongyl")
+            || sampler_config.base_url.contains("router.yundongyl.cn");
+        if !ezr {
+            return;
+        }
+        // Sonnet-5 family (and any model that rejects temperature) — omit entirely.
+        let id = sampler_config.model.to_ascii_lowercase();
+        if id.contains("claude-sonnet-5")
+            || id.contains("sonnet-5")
+            || sampler_config.temperature == Some(0.0)
+        {
+            if sampler_config.temperature.is_some() {
+                eprintln!(
+                    "[micli-auto] stripping temperature={:?} for model={}",
+                    sampler_config.temperature, sampler_config.model
+                );
+            }
+            sampler_config.temperature = None;
+        }
+    }
+
+    fn sanitize_ezr_request(request: &mut ConversationRequest, wire_model: &str) {
+        let id = wire_model.to_ascii_lowercase();
+        if id.contains("claude-sonnet-5")
+            || id.contains("sonnet-5")
+            || request.temperature == Some(0.0)
+        {
+            request.temperature = None;
         }
     }
 
@@ -1199,6 +1263,7 @@ impl SessionActor {
                 _ => {}
             }
         }
+        Self::sanitize_ezr_sampler_config(sampler_config);
         eprintln!(
             "[micli-auto] wire base_url={} has_key={} api_backend={:?} auth_scheme={:?}",
             sampler_config.base_url,
@@ -1503,6 +1568,13 @@ impl SessionActor {
             ))
             .await;
             return Err(acp::Error::invalid_params().data(friendly));
+        }
+
+        // micli: strip deprecated temperature and resubmit once.
+        if Self::is_temperature_deprecated_error(&error)
+            && self.try_clear_temperature_and_retry().await
+        {
+            return Ok(SamplerFailureRecovery::CompactAndResubmit);
         }
 
         // micli Auto: try next model in the capability pool before dying on 429/quota.
