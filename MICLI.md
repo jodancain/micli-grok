@@ -106,7 +106,7 @@ Or read this section + `micli_auto.rs`. A `grok` slash/CLI surface for
 
 When the selected catalog model is Auto and sampling fails with RateLimited / HTTP 429 / quota-like messages, micli advances `next_fallback` within the capability pool (then adjacent pool), refreshes sampler + `ConversationRequest.model`, and resubmits the turn (`CompactAndResubmit`). Logs: `[micli-auto] failover from → to`.
 
-Temperature: Claude Sonnet 5 on 9route rejects `temperature` (including `0`) with HTTP 400 — micli strips it on the wire and retries once if a 400 still mentions deprecated temperature.
+Temperature: Claude models on 9route (esp. Sonnet 5) reject `temperature` (including `0`) with HTTP 400. micli omits it from the ChatCompletions JSON **before the first send** (after catalog defaults would otherwise re-inject), and still retries once if a 400 mentions deprecated temperature.
 
 Wire-model sync: after remap, `run_turn_via_sampler` copies the remapped `ezr/...` id onto `ConversationRequest.model` so the HTTP body does not keep `model=auto`.
 

@@ -504,6 +504,24 @@ fn auth_rejected(message: String, sent_bearer: Option<&str>) -> SamplingError {
 // SamplingClient
 // =============================================================================
 
+
+/// 9route (yundongyl) Claude models — especially Sonnet 5 — reject an explicit
+/// `temperature` (including `0`) with HTTP 400 "`temperature` is deprecated for
+/// this model". Callers may clear `Option::None` on the request, but
+/// [`SamplingClient::apply_defaults`] / conversation defaults would otherwise
+/// re-fill from [`ClientDefaults`] (catalog / session sampling temperature).
+/// Omit on the wire for ezr/Claude when talking to that relay.
+pub fn should_omit_temperature(model: &str, base_url: &str) -> bool {
+    let id = model.to_ascii_lowercase();
+    let ezr_or_yundongyl = id.starts_with("ezr/")
+        || base_url.contains("yundongyl")
+        || base_url.contains("router.yundongyl.cn");
+    if !ezr_or_yundongyl {
+        return false;
+    }
+    id.contains("claude") || id.contains("sonnet-5")
+}
+
 impl SamplingClient {
     /// Uses an identity-specific client for configured mTLS; otherwise grabs the process-wide shared client.
     /// This does not perform any network I/O.
@@ -862,6 +880,11 @@ impl SamplingClient {
 
         if request.top_p.is_none() {
             request.top_p = self.defaults.top_p;
+        }
+
+        let model = request.model.as_deref().unwrap_or(self.defaults.model.as_str());
+        if should_omit_temperature(model, &self.base_url) {
+            request.temperature = None;
         }
 
         Ok(request)
@@ -1243,6 +1266,15 @@ impl SamplingClient {
 
         if request.inner.max_output_tokens.is_none() {
             request.inner.max_output_tokens = self.defaults.max_completion_tokens;
+        }
+
+        let model = request
+            .inner
+            .model
+            .as_deref()
+            .unwrap_or(self.defaults.model.as_str());
+        if should_omit_temperature(model, &self.base_url) {
+            request.inner.temperature = None;
         }
 
         // The API defaults `store` to true, which breaks ZDR compliance
@@ -1638,6 +1670,10 @@ impl SamplingClient {
             request.inner.top_p = self.defaults.top_p;
         }
 
+        if should_omit_temperature(&request.inner.model, &self.base_url) {
+            request.inner.temperature = None;
+        }
+
         Ok(())
     }
 
@@ -1958,6 +1994,11 @@ impl SamplingClient {
 
         if request.max_output_tokens.is_none() {
             request.max_output_tokens = self.defaults.max_completion_tokens;
+        }
+
+        let model = request.model.as_deref().unwrap_or(self.defaults.model.as_str());
+        if should_omit_temperature(model, &self.base_url) {
+            request.temperature = None;
         }
 
         Ok(())
@@ -3547,4 +3588,118 @@ mod tests {
         without.apply_response_defaults(&mut request).unwrap();
         assert_eq!(request.inner.reasoning, None);
     }
+
+    #[test]
+    fn should_omit_temperature_for_ezr_claude_on_yundongyl() {
+        assert!(should_omit_temperature(
+            "ezr/claude-sonnet-5",
+            "https://router.yundongyl.cn/v1"
+        ));
+        assert!(should_omit_temperature(
+            "ezr/claude-opus-5",
+            "https://example.com/v1"
+        ));
+        assert!(should_omit_temperature(
+            "claude-sonnet-5",
+            "https://router.yundongyl.cn/v1"
+        ));
+        assert!(!should_omit_temperature(
+            "ezr/gpt-5.5",
+            "https://router.yundongyl.cn/v1"
+        ));
+        assert!(!should_omit_temperature(
+            "grok-4",
+            "https://api.x.ai/v1"
+        ));
+    }
+
+    #[test]
+    fn apply_defaults_omits_temperature_for_sonnet_5_even_when_defaults_set() {
+        let client = SamplingClient::new(SamplerConfig {
+            base_url: "https://router.yundongyl.cn/v1".into(),
+            model: "ezr/claude-sonnet-5".into(),
+            temperature: Some(0.7),
+            ..minimal_config()
+        })
+        .expect("client");
+        let req = ChatCompletionRequest {
+            model: Some("ezr/claude-sonnet-5".into()),
+            messages: vec![ChatRequestMessage::user("hi")],
+            temperature: None, // would be filled from defaults without omit
+            max_tokens: None,
+            top_p: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            user: None,
+            tools: None,
+            tool_choice: None,
+            search_parameters: None,
+            response_format: None,
+            reasoning_effort: None,
+            x_grok_conv_id: None,
+            x_grok_req_id: None,
+            x_grok_session_id: None,
+            x_grok_turn_idx: None,
+            x_grok_transient_retry: None,
+            x_grok_agent_id: None,
+            x_grok_deployment_id: None,
+            x_grok_user_id: None,
+            trace: None,
+            traceparent: None,
+        };
+        let payload = client.apply_defaults(req).expect("defaults");
+        assert!(
+            payload.temperature.is_none(),
+            "temperature must be omitted for sonnet-5, got {:?}",
+            payload.temperature
+        );
+        let json = serde_json::to_value(&payload).expect("json");
+        assert!(
+            json.get("temperature").is_none(),
+            "wire JSON must not contain temperature key: {json}"
+        );
+    }
+
+    #[test]
+    fn apply_defaults_strips_explicit_temperature_for_sonnet_5() {
+        let client = SamplingClient::new(SamplerConfig {
+            base_url: "https://router.yundongyl.cn/v1".into(),
+            model: "ezr/claude-sonnet-5".into(),
+            temperature: Some(0.7),
+            ..minimal_config()
+        })
+        .expect("client");
+        let req = ChatCompletionRequest {
+            model: Some("ezr/claude-sonnet-5".into()),
+            messages: vec![ChatRequestMessage::user("hi")],
+            temperature: Some(0.0),
+            max_tokens: None,
+            top_p: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            user: None,
+            tools: None,
+            tool_choice: None,
+            search_parameters: None,
+            response_format: None,
+            reasoning_effort: None,
+            x_grok_conv_id: None,
+            x_grok_req_id: None,
+            x_grok_session_id: None,
+            x_grok_turn_idx: None,
+            x_grok_transient_retry: None,
+            x_grok_agent_id: None,
+            x_grok_deployment_id: None,
+            x_grok_user_id: None,
+            trace: None,
+            traceparent: None,
+        };
+        let payload = client.apply_defaults(req).expect("defaults");
+        let json = serde_json::to_value(&payload).expect("json");
+        assert!(
+            json.get("temperature").is_none(),
+            "explicit temperature must still be stripped: {json}"
+        );
+    }
+
 }

@@ -1108,6 +1108,21 @@ impl SessionActor {
         sampler_config.idle_timeout_secs = Some(self.inference_idle_timeout.as_secs());
         Self::sanitize_ezr_sampler_config(&mut sampler_config);
         let wire_model = sampler_config.model.clone();
+        // Mirror omitted temperature into chat-state so build_request cannot resurrect it.
+        if sampler_config.temperature.is_none() {
+            if let Some(mut sc) = self.chat_state_handle.get_sampling_config().await {
+                if sc.temperature.is_some()
+                    && xai_grok_sampler::should_omit_temperature(
+                        &sampler_config.model,
+                        &sampler_config.base_url,
+                    )
+                {
+                    sc.temperature = None;
+                    self.chat_state_handle.update_sampling_config(sc);
+                    let _ = self.chat_state_handle.get_sampling_config().await;
+                }
+            }
+        }
         self.sampler_handle.update_config(sampler_config);
         // update_config is async on the sampler actor — flush so this turn's Submit
         // does not race and still send model="auto".
@@ -1132,35 +1147,40 @@ impl SessionActor {
         Self::sanitize_ezr_request(request, wire_model);
     }
 
-    /// 9route Claude Sonnet 5 rejects `temperature` (incl. 0) with HTTP 400
-    /// "`temperature` is deprecated for this model". Drop it on the wire.
+    /// 9route Claude (esp. Sonnet 5) rejects `temperature` (incl. 0) with HTTP 400
+    /// "`temperature` is deprecated for this model". Drop it before first send.
+    ///
+    /// Note: clearing here is not enough alone — `SamplingClient::apply_defaults`
+    /// re-fills `None` from catalog/session defaults. The sampler also calls
+    /// [`xai_grok_sampler::should_omit_temperature`] after defaults (last place
+    /// temperature is set before the ChatCompletions JSON is built).
     fn sanitize_ezr_sampler_config(sampler_config: &mut SamplingConfig) {
-        let ezr = sampler_config.model.starts_with("ezr/")
-            || sampler_config.base_url.contains("yundongyl")
-            || sampler_config.base_url.contains("router.yundongyl.cn");
-        if !ezr {
+        if !xai_grok_sampler::should_omit_temperature(
+            &sampler_config.model,
+            &sampler_config.base_url,
+        ) {
+            // Still drop an explicit 0.0 on any ezr/yundongyl route (legacy path).
+            let ezr = sampler_config.model.starts_with("ezr/")
+                || sampler_config.base_url.contains("yundongyl")
+                || sampler_config.base_url.contains("router.yundongyl.cn");
+            if ezr && sampler_config.temperature == Some(0.0) {
+                sampler_config.temperature = None;
+            }
             return;
         }
-        // Sonnet-5 family (and any model that rejects temperature) — omit entirely.
-        let id = sampler_config.model.to_ascii_lowercase();
-        if id.contains("claude-sonnet-5")
-            || id.contains("sonnet-5")
-            || sampler_config.temperature == Some(0.0)
-        {
-            if sampler_config.temperature.is_some() {
-                eprintln!(
-                    "[micli-auto] stripping temperature={:?} for model={}",
-                    sampler_config.temperature, sampler_config.model
-                );
-            }
-            sampler_config.temperature = None;
+        if sampler_config.temperature.is_some() {
+            eprintln!(
+                "[micli-auto] stripping temperature={:?} for model={}",
+                sampler_config.temperature, sampler_config.model
+            );
         }
+        sampler_config.temperature = None;
     }
 
     fn sanitize_ezr_request(request: &mut ConversationRequest, wire_model: &str) {
-        let id = wire_model.to_ascii_lowercase();
-        if id.contains("claude-sonnet-5")
-            || id.contains("sonnet-5")
+        // base_url is not on ConversationRequest; treat ezr/Claude wire ids as omit-worthy.
+        // Also cover yundongyl by matching ezr/ prefix / claude / sonnet-5.
+        if xai_grok_sampler::should_omit_temperature(wire_model, "https://router.yundongyl.cn/v1")
             || request.temperature == Some(0.0)
         {
             request.temperature = None;
@@ -1276,6 +1296,11 @@ impl SessionActor {
             sc.base_url = sampler_config.base_url.clone();
             sc.api_backend = sampler_config.api_backend.clone();
             sc.max_completion_tokens = sampler_config.max_completion_tokens;
+            // Keep chat-state temperature in sync with the sanitized sampler config.
+            // build_request copies chat-state temperature onto ConversationRequest *before*
+            // prepare; if we leave a stale Some(0.7) here, the next rebuild / retry path
+            // can put temperature back on the request.
+            sc.temperature = sampler_config.temperature;
             self.chat_state_handle.update_sampling_config(sc);
             let _ = self.chat_state_handle.get_sampling_config().await;
         }
