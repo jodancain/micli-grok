@@ -6,19 +6,35 @@
 # Optional alias:
 #   export XAI_API_KEY="$EZR_CLIENT_KEY"
 #
-# Catalog note: relay GET /v1/models only lists ~4 models — declare [model.*]
+# Catalog note: relay GET /v1/models may list incomplete cc/cx/cbcn ids — local
+# [model.*] is the source of truth. Auto wire stays ezr/*. Declare [model.*]
 # explicitly. Wire IDs must be ezr/<name>. GPT / e-g-* need max_completion_tokens.
+#
+# TOML pitfall: keys with "." must be quoted — [model."ezr-gpt-5.5"] — otherwise
+# TOML nests tables (model → ezr-gpt-5 → 5) and the catalog never gets that key.
+#
+# session_summary / image_description must be an ezr [model.*] with
+# api_backend = "chat_completions" + EZR_CLIENT_KEY (default grok-4.6 would
+# otherwise hit /v1/responses and 401 under BYOK).
+#
+# [cli] auto_update = false is recommended so upstream release binaries do not
+# overwrite a micli-built grok (keep grok.micli + ~/bin/grok wrapper).
 #
 # Auto capabilities (see MICLI.md):
 #   coding_agent, coding_fast, reasoning_heavy, chat_default, cheap_bulk,
 #   vision, long_context, chinese_biz, creative_write
 # Force: MICLI_AUTO_CAPABILITY=coding_agent grok -m auto -p "…"
 
+[cli]
+auto_update = false
+
 [endpoints]
 models_base_url = "https://router.yundongyl.cn/v1"
 
 [models]
 default = "auto"
+session_summary = "ezr-claude-haiku-4-5"
+image_description = "ezr-claude-haiku-4-5"
 
 [model.auto]
 model = "auto"
@@ -47,7 +63,7 @@ env_key = "EZR_CLIENT_KEY"
 context_window = 200000
 
 # pools: coding_agent
-[model.ezr-kimi-k2.7-code]
+[model."ezr-kimi-k2.7-code"]
 model = "ezr/kimi-k2.7-code"
 name = "Kimi K2.7 Code (ezr)"
 api_backend = "chat_completions"
@@ -55,7 +71,7 @@ env_key = "EZR_CLIENT_KEY"
 context_window = 200000
 
 # pools: coding_agent, coding_fast
-[model.ezr-kimi-k2.7-code-highspeed]
+[model."ezr-kimi-k2.7-code-highspeed"]
 model = "ezr/kimi-k2.7-code-highspeed"
 name = "Kimi K2.7 Code Highspeed (ezr)"
 api_backend = "chat_completions"
@@ -71,7 +87,7 @@ env_key = "EZR_CLIENT_KEY"
 context_window = 200000
 
 # pools: coding_agent, chat_default, creative_write
-[model.ezr-gpt-5.5]
+[model."ezr-gpt-5.5"]
 model = "ezr/gpt-5.5"
 name = "Gpt 5.5 (ezr)"
 api_backend = "chat_completions"
@@ -80,7 +96,7 @@ max_completion_tokens = 8192
 context_window = 128000
 
 # pools: coding_agent, reasoning_heavy, long_context, chinese_biz
-[model.ezr-qwen3.8-max]
+[model."ezr-qwen3.8-max"]
 model = "ezr/qwen3.8-max"
 name = "Qwen3.8 Max (ezr)"
 api_backend = "chat_completions"
@@ -96,7 +112,7 @@ env_key = "EZR_CLIENT_KEY"
 context_window = 200000
 
 # pools: coding_agent, chinese_biz
-[model.ezr-glm-5.3]
+[model."ezr-glm-5.3"]
 model = "ezr/glm-5.3"
 name = "Glm 5.3 (ezr)"
 api_backend = "chat_completions"
@@ -104,7 +120,7 @@ env_key = "EZR_CLIENT_KEY"
 context_window = 200000
 
 # pools: coding_agent, chat_default
-[model.ezr-grok-4.6]
+[model."ezr-grok-4.6"]
 model = "ezr/grok-4.6"
 name = "Grok 4.6 (ezr)"
 api_backend = "chat_completions"
@@ -120,7 +136,7 @@ env_key = "EZR_CLIENT_KEY"
 context_window = 200000
 
 # pools: coding_fast
-[model.ezr-gemini-3.8-flash]
+[model."ezr-gemini-3.8-flash"]
 model = "ezr/gemini-3.8-flash"
 name = "Gemini 3.8 Flash (ezr)"
 api_backend = "chat_completions"
@@ -128,7 +144,7 @@ env_key = "EZR_CLIENT_KEY"
 context_window = 200000
 
 # pools: coding_fast
-[model.ezr-gpt-5.4-mini]
+[model."ezr-gpt-5.4-mini"]
 model = "ezr/gpt-5.4-mini"
 name = "Gpt 5.4 Mini (ezr)"
 api_backend = "chat_completions"
@@ -137,7 +153,7 @@ max_completion_tokens = 8192
 context_window = 128000
 
 # pools: coding_fast
-[model.ezr-deepseek-v4.1-flash]
+[model."ezr-deepseek-v4.1-flash"]
 model = "ezr/deepseek-v4.1-flash"
 name = "Deepseek V4.1 Flash (ezr)"
 api_backend = "chat_completions"
@@ -145,7 +161,7 @@ env_key = "EZR_CLIENT_KEY"
 context_window = 200000
 
 # pools: coding_fast, cheap_bulk
-[model.ezr-glm-5.3-flash]
+[model."ezr-glm-5.3-flash"]
 model = "ezr/glm-5.3-flash"
 name = "Glm 5.3 Flash (ezr)"
 api_backend = "chat_completions"
@@ -161,7 +177,7 @@ env_key = "EZR_CLIENT_KEY"
 context_window = 200000
 
 # pools: reasoning_heavy
-[model.ezr-gpt-5.6-sol]
+[model."ezr-gpt-5.6-sol"]
 model = "ezr/gpt-5.6-sol"
 name = "Gpt 5.6 Sol (ezr)"
 api_backend = "chat_completions"
@@ -187,7 +203,7 @@ max_completion_tokens = 8192
 context_window = 128000
 
 # pools: reasoning_heavy, chat_default, long_context
-[model.ezr-gemini-3.1-pro-preview]
+[model."ezr-gemini-3.1-pro-preview"]
 model = "ezr/gemini-3.1-pro-preview"
 name = "Gemini 3.1 Pro Preview (ezr)"
 api_backend = "chat_completions"
@@ -195,7 +211,7 @@ env_key = "EZR_CLIENT_KEY"
 context_window = 200000
 
 # pools: chat_default
-[model.ezr-glm-5.2]
+[model."ezr-glm-5.2"]
 model = "ezr/glm-5.2"
 name = "Glm 5.2 (ezr)"
 api_backend = "chat_completions"
@@ -211,7 +227,7 @@ env_key = "EZR_CLIENT_KEY"
 context_window = 200000
 
 # pools: cheap_bulk
-[model.ezr-gpt-5.4-nano]
+[model."ezr-gpt-5.4-nano"]
 model = "ezr/gpt-5.4-nano"
 name = "Gpt 5.4 Nano (ezr)"
 api_backend = "chat_completions"
@@ -220,7 +236,7 @@ max_completion_tokens = 8192
 context_window = 128000
 
 # pools: cheap_bulk
-[model.ezr-gemini-3.5-flash-lite]
+[model."ezr-gemini-3.5-flash-lite"]
 model = "ezr/gemini-3.5-flash-lite"
 name = "Gemini 3.5 Flash Lite (ezr)"
 api_backend = "chat_completions"
@@ -278,7 +294,7 @@ max_completion_tokens = 8192
 context_window = 128000
 
 # pools: vision
-[model.ezr-gemini-2.5-pro]
+[model."ezr-gemini-2.5-pro"]
 model = "ezr/gemini-2.5-pro"
 name = "Gemini 2.5 Pro (ezr)"
 api_backend = "chat_completions"
@@ -294,7 +310,7 @@ env_key = "EZR_CLIENT_KEY"
 context_window = 200000
 
 # pools: long_context
-[model.ezr-gpt-5.6-terra]
+[model."ezr-gpt-5.6-terra"]
 model = "ezr/gpt-5.6-terra"
 name = "Gpt 5.6 Terra (ezr)"
 api_backend = "chat_completions"

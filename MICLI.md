@@ -12,11 +12,16 @@ Catalog source of truth for the 74 green models: project doc `9route-ezr-models.
 
 ## Quick setup (Mac)
 
-1. Export your relay key (never commit it):
+1. Export your relay key (never commit it). Prefer a persistent env file:
 
    ```sh
+   mkdir -p ~/.micli
+   cat > ~/.micli/env <<'EOF'
    export EZR_CLIENT_KEY="…"
    export XAI_API_KEY="$EZR_CLIENT_KEY"   # optional alias
+   EOF
+   # shell profile:
+   #   [ -f ~/.micli/env ] && . ~/.micli/env
    ```
 
 2. Merge the preset into `~/.grok/config.toml`:
@@ -26,17 +31,42 @@ Catalog source of truth for the 74 green models: project doc `9route-ezr-models.
    cat config/micli-9route.example.toml >> ~/.grok/config.toml
    ```
 
-3. Build and install:
+   Confirm `[models] session_summary` / `image_description` point at an ezr
+   catalog key with `api_backend = "chat_completions"` (preset uses
+   `ezr-claude-haiku-4-5`). The compiled default `grok-4.6` is not in the BYOK
+   catalog and must not be used for title gen under a custom `models_base_url`.
+
+   Keep `[cli] auto_update = false` (in the preset) so an upstream release does
+   not overwrite your micli binary.
+
+3. Build and install **without** letting auto-update replace micli:
 
    ```sh
    cargo build -p xai-grok-pager-bin --release
-   cp target/release/xai-grok-pager ~/.grok/bin/grok
+   mkdir -p ~/.grok/bin
+   cp target/release/xai-grok-pager ~/.grok/bin/grok.micli
+   # optional: keep a dated copy as ~/.grok/bin/grok as well
    ```
 
-4. Smoke test:
+4. Put a thin wrapper on your PATH (so `grok` always means micli):
+
+   ```sh
+   mkdir -p ~/bin
+   cat > ~/bin/grok <<'EOF'
+   #!/usr/bin/env bash
+   set -euo pipefail
+   [ -f "$HOME/.micli/env" ] && . "$HOME/.micli/env"
+   exec "$HOME/.grok/bin/grok.micli" "$@"
+   EOF
+   chmod +x ~/bin/grok
+   # ensure ~/bin is before any brew/npm grok on PATH
+   ```
+
+5. Smoke test:
 
    ```sh
    grok -m ezr-claude-haiku-4-5 -p "ping"
+   grok -m "ezr-gpt-5.5" -p "ping"   # quoted catalog key; see TOML pitfall below
    grok -m auto -p "refactor the auth module"
    # stderr: [micli-auto] capability=coding_agent model=ezr/claude-sonnet-5
    ```
@@ -85,10 +115,23 @@ by `format_capabilities_listing()` (unit-tested). Adjacent spillover examples:
 ### Catalog / relay notes
 
 - Wire model ids **must** be `ezr/<name>`.
-- Relay `GET /v1/models` only lists ~4 models — rely on explicit `[model.*]`
-  (see `config/micli-9route.example.toml`, ~35 pool models) + built-in Auto stub.
+- Relay `GET /v1/models` may list incomplete `cc` / `cx` / `cbcn` ids — rely on
+  explicit `[model.*]` (see `config/micli-9route.example.toml`) as source of
+  truth. Auto wire stays `ezr/*` (+ built-in Auto stub).
+- **TOML dotted keys:** any catalog key containing `.` must use a quoted header,
+  e.g. `[model."ezr-gpt-5.5"]`. Unquoted `[model.ezr-gpt-5.5]` is parsed as
+  nested tables (`model` → `ezr-gpt-5` → `5`), so the catalog never gets
+  `ezr-gpt-5.5` and `grok -m ezr-gpt-5.5` fails. Same for `kimi-k2.7-code`,
+  `gpt-5.4-nano`, `grok-4.6`, etc.
+- Pin `[models] session_summary` (and `image_description`) to an ezr
+  `[model.*]` with `chat_completions` + `EZR_CLIENT_KEY`. Under a custom
+  `models_base_url`, an unknown aux slug (e.g. default `grok-4.6`) must not
+  synthesize a Responses-API call with the session bearer (would 401 on
+  `/v1/responses`).
 - GPT / `e-g-*` family: set `max_completion_tokens` (example toml does this).
 - Auth: `EZR_CLIENT_KEY` (Bearer). Auto stub also accepts `XAI_API_KEY`.
+- Binary pin: `[cli] auto_update = false`, install as `~/.grok/bin/grok.micli`,
+  expose via `~/bin/grok` wrapper that sources `~/.micli/env`.
 
 ### Listing capabilities
 
@@ -109,4 +152,3 @@ When the selected catalog model is Auto and sampling fails with RateLimited / HT
 Temperature: Claude Sonnet 5 on 9route rejects `temperature` (including `0`) with HTTP 400 — micli strips it on the wire and retries once if a 400 still mentions deprecated temperature.
 
 Wire-model sync: after remap, `run_turn_via_sampler` copies the remapped `ezr/...` id onto `ConversationRequest.model` so the HTTP body does not keep `model=auto`.
-

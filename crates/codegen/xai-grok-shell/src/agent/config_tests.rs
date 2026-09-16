@@ -487,6 +487,26 @@ fn resolve_aux_model_honors_grok_build_override() {
     assert_eq!(resolved.base_url, "https://vendor.example/v1");
     assert_eq!(resolved.api_key.as_deref(), Some("vendor-key"));
 }
+/// BYOK/9route: unknown aux slug with custom models_base_url must not synthesize Responses+bearer.
+#[test]
+fn resolve_aux_model_skips_synthesize_on_custom_endpoint_unknown_slug() {
+    let mut endpoints = EndpointsConfig::default();
+    endpoints.models_base_url = Some("https://router.example/v1".to_owned());
+    let catalog = IndexMap::new();
+    assert!(
+        resolve_aux_model_sampling_config(
+            "grok-4.6",
+            &catalog,
+            &endpoints,
+            Some("session-bearer"),
+            false,
+            None,
+            None,
+        )
+        .is_none(),
+        "unknown aux under custom endpoint must return None (no /responses synthesize)"
+    );
+}
 /// Cold cache falls back to the session model, never the xAI proxy; warm cache serves the provider token at the provider endpoint.
 #[tokio::test]
 async fn aux_model_with_auth_provider_never_reroutes() {

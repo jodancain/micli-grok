@@ -4875,6 +4875,14 @@ pub(crate) fn resolve_aux_model_sampling_config(
             return None;
         }
     }
+    // BYOK/9route — unknown aux (e.g. default grok-4.6) must not hit /responses.
+    if catalog_entry.is_none() && endpoints.has_custom_endpoint() {
+        tracing::warn!(
+            aux_model = %model_id,
+            "aux model not in catalog with custom models_base_url; falling back to active model (skip Responses+bearer synthesize)"
+        );
+        return None;
+    }
     let xai_bearer = session_key
         .map(|s| s.to_owned())
         .or_else(|| crate::agent::auth_method::read_xai_api_key_env().ok())

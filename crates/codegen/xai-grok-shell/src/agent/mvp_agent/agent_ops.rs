@@ -142,9 +142,8 @@ impl MvpAgent {
                 cfg
             }
             None => {
-                let mut fallback = primary.clone();
-                fallback.model = slug;
-                fallback
+                // Keep the live session wire model for title gen (do not force aux slug).
+                primary.clone()
             }
         };
         let model = config.model.clone();
