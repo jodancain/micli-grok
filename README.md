@@ -36,6 +36,11 @@ for the version of the code present in this tree.
 
 </div>
 
+> **micli fork** — This tree is [jodancain/micli-grok](https://github.com/jodancain/micli-grok),
+> the **micli** product: full Grok TUI/UX with 9route/ezr inference and an `auto` model router.
+> See **[MICLI.md](MICLI.md)** for 9route setup, Auto behavior, and Mac rebuild/install steps.
+> Example config: [`config/micli-9route.example.toml`](config/micli-9route.example.toml).
+
 ---
 
 ## Installing the released binary
@@ -50,6 +55,23 @@ grok --version
 
 See the [changelog](https://x.ai/build/changelog) for the latest fixes,
 features, and improvements in each release.
+
+
+## micli (9route + Auto)
+
+This fork ships as **micli**. After configuring `EZR_CLIENT_KEY` and copying
+[`config/micli-9route.example.toml`](config/micli-9route.example.toml) into
+`~/.grok/config.toml`:
+
+```sh
+cargo build -p xai-grok-pager-bin --release
+cp target/release/xai-grok-pager ~/.grok/bin/grok   # or your grok install path
+grok -m auto -p "refactor the auth module"         # → capability=coding_agent → ezr/claude-sonnet-5
+```
+
+Auto is **capability-based** across the 74-model ezr catalog (coding_agent,
+coding_fast, reasoning_heavy, chat_default, cheap_bulk, vision, long_context,
+chinese_biz, creative_write). Full details: [MICLI.md](MICLI.md).
 
 ## Building from source
 
