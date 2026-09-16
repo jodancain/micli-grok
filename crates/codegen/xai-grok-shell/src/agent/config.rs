@@ -3289,6 +3289,35 @@ fn managed_settings_env_flag(key: &str) -> Option<bool> {
     let json: serde_json::Value = serde_json::from_str(&content).ok()?;
     xai_grok_workspace::permission::resolution::json_env_flag(json.get("env"), key)
 }
+
+/// Built-in synthetic Auto catalog entries for micli (9route). Config `[model.auto]` wins if present.
+fn inject_micli_auto_catalog(
+    resolved: &mut IndexMap<String, ModelEntry>,
+    endpoints: &EndpointsConfig,
+) {
+    for key in ["auto", "micli-auto"] {
+        if resolved.contains_key(key) {
+            continue;
+        }
+        let mut entry = ModelEntry::fallback(key, endpoints);
+        entry.info.model = key.to_owned();
+        entry.info.name = Some(if key == "auto" {
+            "Auto".to_owned()
+        } else {
+            "micli Auto".to_owned()
+        });
+        entry.info.description = Some(
+            "micli Auto: capability router over ezr/* pools (coding_agent, vision, ...)".to_owned(),
+        );
+        entry.info.api_backend = ApiBackend::ChatCompletions;
+        entry.info.context_window =
+            NonZeroU64::new(200_000).expect("200000 is non-zero");
+        entry.env_key = Some(EnvKeys::new(["EZR_CLIENT_KEY", "XAI_API_KEY"]));
+        tracing::debug!(model_key = %key, "injected micli Auto catalog stub");
+        resolved.insert(key.to_owned(), entry);
+    }
+}
+
 /// Assemble the final model map. Priority (highest wins):
 /// config.toml `[model.*]` > prefetched (remote) > hardcoded defaults.
 pub(crate) fn resolve_model_list(
@@ -3455,6 +3484,7 @@ pub(crate) fn resolve_model_list(
     for entry in resolved.values_mut() {
         entry.info.derive_reasoning_effort_fields();
     }
+    inject_micli_auto_catalog(&mut resolved, &cfg.endpoints);
     resolved
 }
 /// Layer 6 of [`resolve_model_list`]: fold the global `[models].extra_headers` into every model as a base. The presence check is case-insensitive because the sampler lowers these into an `http::HeaderMap`.

@@ -1,0 +1,327 @@
+# micli + 9route/ezr preset (capability Auto pools)
+# Copy/merge into ~/.grok/config.toml.
+#
+# Required:
+#   export EZR_CLIENT_KEY="…"
+# Optional alias:
+#   export XAI_API_KEY="$EZR_CLIENT_KEY"
+#
+# Catalog note: relay GET /v1/models only lists ~4 models — declare [model.*]
+# explicitly. Wire IDs must be ezr/<name>. GPT / e-g-* need max_completion_tokens.
+#
+# Auto capabilities (see MICLI.md):
+#   coding_agent, coding_fast, reasoning_heavy, chat_default, cheap_bulk,
+#   vision, long_context, chinese_biz, creative_write
+# Force: MICLI_AUTO_CAPABILITY=coding_agent grok -m auto -p "…"
+
+[endpoints]
+models_base_url = "https://router.yundongyl.cn/v1"
+
+[models]
+default = "auto"
+
+[model.auto]
+model = "auto"
+name = "Auto"
+description = "micli Auto: capability router over ezr/* pools"
+api_backend = "chat_completions"
+env_key = ["EZR_CLIENT_KEY", "XAI_API_KEY"]
+context_window = 200000
+
+[model.micli-auto]
+model = "micli-auto"
+name = "micli Auto"
+description = "Alias for Auto"
+api_backend = "chat_completions"
+env_key = ["EZR_CLIENT_KEY", "XAI_API_KEY"]
+context_window = 200000
+
+# ── Models referenced by Auto capability pools ──────────────────────────
+
+# pools: coding_agent, chat_default, vision, chinese_biz
+[model.ezr-claude-sonnet-5]
+model = "ezr/claude-sonnet-5"
+name = "Claude Sonnet 5 (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+context_window = 200000
+
+# pools: coding_agent
+[model.ezr-kimi-k2.7-code]
+model = "ezr/kimi-k2.7-code"
+name = "Kimi K2.7 Code (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+context_window = 200000
+
+# pools: coding_agent, coding_fast
+[model.ezr-kimi-k2.7-code-highspeed]
+model = "ezr/kimi-k2.7-code-highspeed"
+name = "Kimi K2.7 Code Highspeed (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+context_window = 200000
+
+# pools: coding_agent
+[model.ezr-claude-sonnet-4-6]
+model = "ezr/claude-sonnet-4-6"
+name = "Claude Sonnet 4 6 (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+context_window = 200000
+
+# pools: coding_agent, chat_default, creative_write
+[model.ezr-gpt-5.5]
+model = "ezr/gpt-5.5"
+name = "Gpt 5.5 (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+max_completion_tokens = 8192
+context_window = 128000
+
+# pools: coding_agent, reasoning_heavy, long_context, chinese_biz
+[model.ezr-qwen3.8-max]
+model = "ezr/qwen3.8-max"
+name = "Qwen3.8 Max (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+context_window = 200000
+
+# pools: coding_agent, reasoning_heavy, chinese_biz
+[model.ezr-deepseek-v4-pro]
+model = "ezr/deepseek-v4-pro"
+name = "Deepseek V4 Pro (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+context_window = 200000
+
+# pools: coding_agent, chinese_biz
+[model.ezr-glm-5.3]
+model = "ezr/glm-5.3"
+name = "Glm 5.3 (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+context_window = 200000
+
+# pools: coding_agent, chat_default
+[model.ezr-grok-4.6]
+model = "ezr/grok-4.6"
+name = "Grok 4.6 (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+context_window = 200000
+
+# pools: coding_fast, cheap_bulk
+[model.ezr-claude-haiku-4-5]
+model = "ezr/claude-haiku-4-5"
+name = "Claude Haiku 4 5 (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+context_window = 200000
+
+# pools: coding_fast
+[model.ezr-gemini-3.8-flash]
+model = "ezr/gemini-3.8-flash"
+name = "Gemini 3.8 Flash (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+context_window = 200000
+
+# pools: coding_fast
+[model.ezr-gpt-5.4-mini]
+model = "ezr/gpt-5.4-mini"
+name = "Gpt 5.4 Mini (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+max_completion_tokens = 8192
+context_window = 128000
+
+# pools: coding_fast
+[model.ezr-deepseek-v4.1-flash]
+model = "ezr/deepseek-v4.1-flash"
+name = "Deepseek V4.1 Flash (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+context_window = 200000
+
+# pools: coding_fast, cheap_bulk
+[model.ezr-glm-5.3-flash]
+model = "ezr/glm-5.3-flash"
+name = "Glm 5.3 Flash (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+context_window = 200000
+
+# pools: reasoning_heavy, long_context
+[model.ezr-claude-opus-5]
+model = "ezr/claude-opus-5"
+name = "Claude Opus 5 (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+context_window = 200000
+
+# pools: reasoning_heavy
+[model.ezr-gpt-5.6-sol]
+model = "ezr/gpt-5.6-sol"
+name = "Gpt 5.6 Sol (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+max_completion_tokens = 8192
+context_window = 128000
+
+# pools: reasoning_heavy
+[model.ezr-claude-opus-4-8]
+model = "ezr/claude-opus-4-8"
+name = "Claude Opus 4 8 (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+context_window = 200000
+
+# pools: reasoning_heavy
+[model.ezr-gpt-6-astra]
+model = "ezr/gpt-6-astra"
+name = "Gpt 6 Astra (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+max_completion_tokens = 8192
+context_window = 128000
+
+# pools: reasoning_heavy, chat_default, long_context
+[model.ezr-gemini-3.1-pro-preview]
+model = "ezr/gemini-3.1-pro-preview"
+name = "Gemini 3.1 Pro Preview (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+context_window = 200000
+
+# pools: chat_default
+[model.ezr-glm-5.2]
+model = "ezr/glm-5.2"
+name = "Glm 5.2 (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+context_window = 200000
+
+# pools: chat_default, creative_write
+[model.ezr-MiniMax-M3]
+model = "ezr/MiniMax-M3"
+name = "Minimax M3 (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+context_window = 200000
+
+# pools: cheap_bulk
+[model.ezr-gpt-5.4-nano]
+model = "ezr/gpt-5.4-nano"
+name = "Gpt 5.4 Nano (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+max_completion_tokens = 8192
+context_window = 128000
+
+# pools: cheap_bulk
+[model.ezr-gemini-3.5-flash-lite]
+model = "ezr/gemini-3.5-flash-lite"
+name = "Gemini 3.5 Flash Lite (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+context_window = 200000
+
+# pools: cheap_bulk
+[model.ezr-deepseek-flash]
+model = "ezr/deepseek-flash"
+name = "Deepseek Flash (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+context_window = 200000
+
+# pools: cheap_bulk
+[model.ezr-seed-2-0-lite-260228]
+model = "ezr/seed-2-0-lite-260228"
+name = "Seed 2 0 Lite 260228 (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+context_window = 200000
+
+# pools: cheap_bulk
+[model.ezr-gpt-4o-mini]
+model = "ezr/gpt-4o-mini"
+name = "Gpt 4O Mini (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+max_completion_tokens = 8192
+context_window = 128000
+
+# pools: vision
+[model.ezr-glm-5v-turbo]
+model = "ezr/glm-5v-turbo"
+name = "Glm 5V Turbo (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+context_window = 200000
+
+# pools: vision
+[model.ezr-deepseek-v4-flash-vision-exp]
+model = "ezr/deepseek-v4-flash-vision-exp"
+name = "Deepseek V4 Flash Vision Exp (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+context_window = 200000
+
+# pools: vision
+[model.ezr-gpt-4o]
+model = "ezr/gpt-4o"
+name = "Gpt 4O (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+max_completion_tokens = 8192
+context_window = 128000
+
+# pools: vision
+[model.ezr-gemini-2.5-pro]
+model = "ezr/gemini-2.5-pro"
+name = "Gemini 2.5 Pro (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+context_window = 200000
+
+# pools: long_context
+[model.ezr-kimi-k3]
+model = "ezr/kimi-k3"
+name = "Kimi K3 (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+context_window = 200000
+
+# pools: long_context
+[model.ezr-gpt-5.6-terra]
+model = "ezr/gpt-5.6-terra"
+name = "Gpt 5.6 Terra (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+max_completion_tokens = 8192
+context_window = 128000
+
+# pools: chinese_biz
+[model.ezr-doubao-seed-2-0-pro-260215]
+model = "ezr/doubao-seed-2-0-pro-260215"
+name = "Doubao Seed 2 0 Pro 260215 (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+context_window = 200000
+
+# pools: creative_write
+[model.ezr-claude-fable-5-1]
+model = "ezr/claude-fable-5-1"
+name = "Claude Fable 5 1 (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+context_window = 200000
+
+# pools: creative_write
+[model.ezr-claude-fable-5]
+model = "ezr/claude-fable-5"
+name = "Claude Fable 5 (ezr)"
+api_backend = "chat_completions"
+env_key = "EZR_CLIENT_KEY"
+context_window = 200000

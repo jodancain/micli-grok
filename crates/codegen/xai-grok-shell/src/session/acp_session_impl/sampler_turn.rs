@@ -1015,6 +1015,9 @@ impl SessionActor {
     pub(crate) async fn prepare_sampler_for_turn(&self) {
         self.refresh_token_if_expired().await;
         let mut sampler_config = self.reconstruct_full_config().await;
+        // micli Auto: remap synthetic `auto` / `micli-auto` → concrete `ezr/...` for this call only.
+        // Session UI / models_manager keep showing Auto; only the sampler wire model changes.
+        self.apply_micli_auto_remap(&mut sampler_config).await;
         if self.tool_context.task_output_token_budget.is_some()
             || self.tool_context.sampler_retry_only_before_output
         {
@@ -1023,6 +1026,62 @@ impl SessionActor {
         // Carry over the session's per-chunk idle timeout via `SamplerConfig.idle_timeout_secs`
         sampler_config.idle_timeout_secs = Some(self.inference_idle_timeout.as_secs());
         self.sampler_handle.update_config(sampler_config);
+    }
+
+    /// If the selected model is Auto, classify the latest human prompt and rewrite
+    /// `sampler_config.model` (and max tokens when the target catalog entry has them).
+    async fn apply_micli_auto_remap(&self, sampler_config: &mut SamplingConfig) {
+        let current_catalog = self.models_manager.current_model_id().0.to_string();
+        if !crate::micli_auto::is_auto_model_id(&sampler_config.model)
+            && !crate::micli_auto::is_auto_model_id(&current_catalog)
+        {
+            return;
+        }
+        let prompt = self.last_human_prompt_for_auto().await;
+        let forced = std::env::var("MICLI_AUTO_CAPABILITY")
+            .or_else(|_| std::env::var("MICLI_AUTO_TIER"))
+            .ok()
+            .and_then(|s| crate::micli_auto::AutoCapability::parse(&s));
+        let resolved = crate::micli_auto::resolve_auto_model(&prompt, forced);
+        eprintln!(
+            "[micli-auto] capability={} model={}",
+            resolved.capability.as_str(),
+            resolved.model_api_id
+        );
+        tracing::info!(
+            capability = %resolved.capability.as_str(),
+            model = %resolved.model_api_id,
+            catalog_key = %resolved.catalog_key,
+            "[micli-auto] resolved"
+        );
+        sampler_config.model = resolved.model_api_id.clone();
+        if let Some(entry) = crate::agent::config::find_model_by_id(
+            &self.models_manager.models(),
+            &resolved.catalog_key,
+        ) {
+            if let Some(mct) = entry.info.max_completion_tokens {
+                sampler_config.max_completion_tokens = Some(mct);
+            }
+            if !entry.info.model.is_empty() && !crate::micli_auto::is_auto_model_id(&entry.info.model)
+            {
+                sampler_config.model = entry.info.model.clone();
+            }
+        }
+    }
+
+    async fn last_human_prompt_for_auto(&self) -> String {
+        let conversation = self.chat_state_handle.get_conversation().await;
+        for item in conversation.iter().rev() {
+            if let ConversationItem::User(u) = item {
+                if u.synthetic_reason.is_human() {
+                    let text = item.text_content();
+                    if !text.trim().is_empty() {
+                        return text;
+                    }
+                }
+            }
+        }
+        String::new()
     }
 
     /// Fold an auth remedy into a turn failure: its advice becomes the tail of the message.
