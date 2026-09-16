@@ -108,3 +108,20 @@ When the selected catalog model is Auto and sampling fails with RateLimited / HT
 
 Wire-model sync: after remap, `run_turn_via_sampler` copies the remapped `ezr/...` id onto `ConversationRequest.model` so the HTTP body does not keep `model=auto`.
 
+
+## Identity (not xAI Grok)
+
+Runtime identity for the agent lives in `$GROK_HOME/AGENTS.md` (on mai.local: `~/.micli/AGENTS.md`).
+Canonical copy in-repo: `config/micli-AGENTS.md`. Install/copy it into `GROK_HOME` so the model does not claim the xAI API when routed via 9route.
+
+Also set in `config.toml`:
+
+```toml
+[auth]
+preferred_method = "api_key"
+
+[agent]
+system_prompt_label = "micli"
+```
+
+Chat entry is **`micli`** with `GROK_HOME=~/.micli`; official `grok` stays on `~/.grok`.
